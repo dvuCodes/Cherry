@@ -15,6 +15,7 @@ interface ModelProgressProps {
 export function ModelProgress({ modelName, displayName, isDownloading = false }: ModelProgressProps) {
   const [progress, setProgress] = useState<ModelProgressType | null>(null);
   const serverUrl = useServerStore((state) => state.serverUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
 
   useEffect(() => {
     // IMPORTANT: Only connect to SSE when this specific model is downloading
@@ -27,7 +28,8 @@ export function ModelProgress({ modelName, displayName, isDownloading = false }:
     console.log(`[ModelProgress] Connecting SSE for ${modelName}`);
 
     // Subscribe to progress updates via Server-Sent Events
-    const eventSource = new EventSource(`${serverUrl}/models/progress/${modelName}`);
+    const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+    const eventSource = new EventSource(`${serverUrl}/models/progress/${modelName}${tokenQuery}`);
 
     eventSource.onmessage = (event) => {
       try {
@@ -53,7 +55,7 @@ export function ModelProgress({ modelName, displayName, isDownloading = false }:
       console.log(`[ModelProgress] Cleanup - closing SSE for ${modelName}`);
       eventSource.close();
     };
-  }, [serverUrl, modelName, isDownloading]);
+  }, [serverUrl, modelName, isDownloading, apiToken]);
 
   // Don't render if no progress or if complete/error and some time has passed
   if (

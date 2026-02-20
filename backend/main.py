@@ -4,10 +4,9 @@ FastAPI application for voicebox backend.
 Handles voice cloning, generation history, and server mode.
 """
 
-from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -15,35 +14,83 @@ import asyncio
 import uvicorn
 import argparse
 import torch
-import tempfile
 import io
 from pathlib import Path
 import uuid
-import asyncio
 import signal
 import os
+import logging
 
 from . import database, models, profiles, history, tts, transcribe, config, export_import, channels, stories, __version__
 from .database import get_db, Generation as DBGeneration, VoiceProfile as DBVoiceProfile
+from .security import (
+    get_configured_api_token,
+    is_loopback_host,
+    is_remote_mode_request,
+    request_has_valid_api_token,
+)
 from .utils.progress import get_progress_manager
 from .utils.tasks import get_task_manager
 from .utils.cache import clear_voice_prompt_cache
+from .utils.uploads import UploadTooLargeError, read_upload_limited, save_upload_to_temp
 from .platform_detect import get_backend_type
+
+logger = logging.getLogger(__name__)
+
+_DOCS_ENABLED = config.docs_enabled()
 
 app = FastAPI(
     title="voicebox API",
     description="Production-quality Qwen3-TTS voice cloning API",
     version=__version__,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=config.get_allowed_cors_origins(),
+    allow_origin_regex=config.get_default_cors_origin_regex(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_MAX_AUDIO_UPLOAD_BYTES = config.get_max_upload_mb_audio() * 1024 * 1024
+_MAX_IMAGE_UPLOAD_BYTES = config.get_max_upload_mb_image() * 1024 * 1024
+_OPEN_PATHS = {"/", "/health"}
+
+
+def _is_auth_exempt_path(path: str) -> bool:
+    if path in _OPEN_PATHS:
+        return True
+
+    if _DOCS_ENABLED and (
+        path == "/docs"
+        or path.startswith("/docs/")
+        or path == "/redoc"
+        or path == "/openapi.json"
+    ):
+        return True
+
+    return False
+
+
+def _internal_error_message() -> str:
+    return "Internal server error"
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if request.method.upper() == "OPTIONS" or _is_auth_exempt_path(request.url.path):
+        return await call_next(request)
+
+    if is_remote_mode_request(request) and not request_has_valid_api_token(request):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    return await call_next(request)
 
 
 # ============================================
@@ -186,25 +233,17 @@ async def import_profile(
     db: Session = Depends(get_db),
 ):
     """Import a voice profile from a ZIP archive."""
-    # Validate file size (max 100MB)
-    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
-    
-    # Read file content
-    content = await file.read()
-    
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024)}MB"
-        )
-    
     try:
+        content = await read_upload_limited(file, _MAX_AUDIO_UPLOAD_BYTES)
         profile = await export_import.import_profile_from_zip(content, db)
         return profile
+    except UploadTooLargeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to import profile archive")
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.get("/profiles/{profile_id}", response_model=models.VoiceProfileResponse)
@@ -252,13 +291,14 @@ async def add_profile_sample(
     db: Session = Depends(get_db),
 ):
     """Add a sample to a voice profile."""
-    # Save uploaded file to temporary location
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-    
+    tmp_path = None
     try:
+        tmp_file = await save_upload_to_temp(
+            file,
+            suffix=".wav",
+            max_size_bytes=_MAX_AUDIO_UPLOAD_BYTES,
+        )
+        tmp_path = str(tmp_file)
         sample = await profiles.add_profile_sample(
             profile_id,
             tmp_path,
@@ -266,11 +306,14 @@ async def add_profile_sample(
             db,
         )
         return sample
+    except UploadTooLargeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         # Clean up temp file
-        Path(tmp_path).unlink(missing_ok=True)
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 @app.get("/profiles/{profile_id}/samples", response_model=List[models.ProfileSampleResponse])
@@ -314,20 +357,26 @@ async def upload_profile_avatar(
     db: Session = Depends(get_db),
 ):
     """Upload or update avatar image for a profile."""
-    # Save uploaded file to temp location
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
+    filename = file.filename or "avatar.png"
+    suffix = Path(filename).suffix or ".png"
+    tmp_path = None
     try:
+        tmp_file = await save_upload_to_temp(
+            file,
+            suffix=suffix,
+            max_size_bytes=_MAX_IMAGE_UPLOAD_BYTES,
+        )
+        tmp_path = str(tmp_file)
         profile = await profiles.upload_avatar(profile_id, tmp_path, db)
         return profile
+    except UploadTooLargeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         # Clean up temp file
-        Path(tmp_path).unlink(missing_ok=True)
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 @app.get("/profiles/{profile_id}/avatar")
@@ -393,8 +442,9 @@ async def export_profile(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to export profile %s", profile_id)
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 # ============================================
@@ -617,12 +667,16 @@ async def generate_speech(
         
         return generation
         
+    except HTTPException:
+        task_manager.complete_generation(generation_id)
+        raise
     except ValueError as e:
         task_manager.complete_generation(generation_id)
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to generate speech")
         task_manager.complete_generation(generation_id)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 # ============================================
@@ -659,25 +713,17 @@ async def import_generation(
     db: Session = Depends(get_db),
 ):
     """Import a generation from a ZIP archive."""
-    # Validate file size (max 50MB)
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-    
-    # Read file content
-    content = await file.read()
-    
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024)}MB"
-        )
-    
     try:
+        content = await read_upload_limited(file, _MAX_AUDIO_UPLOAD_BYTES)
         result = await export_import.import_generation_from_zip(content, db)
         return result
+    except UploadTooLargeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to import generation archive")
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.get("/history/{generation_id}", response_model=models.HistoryResponse)
@@ -758,8 +804,9 @@ async def export_generation(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to export generation %s", generation_id)
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.get("/history/{generation_id}/export-audio")
@@ -801,13 +848,15 @@ async def transcribe_audio(
     language: Optional[str] = Form(None),
 ):
     """Transcribe audio file to text."""
-    # Save uploaded file to temporary location
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-    
+    tmp_path = None
     try:
+        tmp_file = await save_upload_to_temp(
+            file,
+            suffix=".wav",
+            max_size_bytes=_MAX_AUDIO_UPLOAD_BYTES,
+        )
+        tmp_path = str(tmp_file)
+
         # Get audio duration
         from .utils.audio import load_audio
         audio, sr = load_audio(tmp_path)
@@ -852,12 +901,17 @@ async def transcribe_audio(
             text=text,
             duration=duration,
         )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except UploadTooLargeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to transcribe audio")
+        raise HTTPException(status_code=500, detail=_internal_error_message())
     finally:
         # Clean up temp file
-        Path(tmp_path).unlink(missing_ok=True)
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 # ============================================
@@ -1059,8 +1113,9 @@ async def export_story_audio(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to export story audio %s", story_id)
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 # ============================================
@@ -1116,8 +1171,9 @@ async def load_model(model_size: str = "1.7B"):
         tts_model = tts.get_tts_model()
         await tts_model.load_model_async(model_size)
         return {"message": f"Model {model_size} loaded successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to load model %s", model_size)
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.post("/models/unload")
@@ -1126,8 +1182,9 @@ async def unload_model():
     try:
         tts.unload_tts_model()
         return {"message": "Model unloaded successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to unload model")
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.get("/models/progress/{model_name}")
@@ -1542,17 +1599,19 @@ async def delete_model(model_name: str):
         try:
             shutil.rmtree(repo_cache_dir)
         except OSError as e:
+            logger.exception("Failed to delete model cache directory %s", repo_cache_dir)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to delete model cache directory: {str(e)}"
+                detail=_internal_error_message(),
             )
         
         return {"message": f"Model {model_name} deleted successfully"}
         
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
+    except Exception:
+        logger.exception("Failed to delete model %s", model_name)
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 @app.post("/cache/clear")
@@ -1564,8 +1623,9 @@ async def clear_cache():
             "message": f"Voice prompt cache cleared successfully",
             "files_deleted": deleted_count,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+    except Exception:
+        logger.exception("Failed to clear voice prompt cache")
+        raise HTTPException(status_code=500, detail=_internal_error_message())
 
 
 # ============================================
@@ -1654,6 +1714,13 @@ def _get_gpu_status() -> str:
 async def startup_event():
     """Run on application startup."""
     print("voicebox API starting up...")
+    bind_host = os.getenv("VOICEBOX_BIND_HOST", "").strip() or "127.0.0.1"
+    if not is_loopback_host(bind_host):
+        if not get_configured_api_token():
+            raise RuntimeError(
+                "VOICEBOX_API_TOKEN is required when binding backend to a non-localhost host."
+            )
+
     database.init_db()
     print(f"Database initialized at {database._db_path}")
     backend_type = get_backend_type()
@@ -1720,6 +1787,7 @@ if __name__ == "__main__":
 
     # Initialize database after data directory is set
     database.init_db()
+    os.environ["VOICEBOX_BIND_HOST"] = args.host
 
     uvicorn.run(
         "backend.main:app",

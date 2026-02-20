@@ -36,9 +36,11 @@ export function StoryChatItem({
 }: StoryChatItemProps) {
   const seek = useStoryStore((state) => state.seek);
   const serverUrl = useServerStore((state) => state.serverUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
   const [avatarError, setAvatarError] = useState(false);
 
-  const avatarUrl = `${serverUrl}/profiles/${item.profile_id}/avatar`;
+  const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+  const avatarUrl = `${serverUrl}/profiles/${item.profile_id}/avatar${tokenQuery}`;
 
   // Check if this item is currently playing based on timecode
   const itemStartMs = item.start_time_ms;

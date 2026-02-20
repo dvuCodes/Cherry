@@ -32,12 +32,34 @@ class ApiClient {
     return serverUrl;
   }
 
+  private getApiToken(): string {
+    return useServerStore.getState().apiToken.trim();
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const token = this.getApiToken();
+    if (!token) {
+      return {};
+    }
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  private withAuthQuery(url: string): string {
+    const token = this.getApiToken();
+    if (!token) {
+      return url;
+    }
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}access_token=${encodeURIComponent(token)}`;
+  }
+
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const url = `${this.getBaseUrl()}${endpoint}`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}${endpoint}`);
     const response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...this.getAuthHeaders(),
         ...options?.headers,
       },
     });
@@ -91,7 +113,7 @@ class ApiClient {
     file: File,
     referenceText: string,
   ): Promise<ProfileSampleResponse> {
-    const url = `${this.getBaseUrl()}/profiles/${profileId}/samples`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/profiles/${profileId}/samples`);
     const formData = new FormData();
     formData.append('file', file);
     formData.append('reference_text', referenceText);
@@ -99,6 +121,7 @@ class ApiClient {
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -132,8 +155,10 @@ class ApiClient {
   }
 
   async exportProfile(profileId: string): Promise<Blob> {
-    const url = `${this.getBaseUrl()}/profiles/${profileId}/export`;
-    const response = await fetch(url);
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/profiles/${profileId}/export`);
+    const response = await fetch(url, {
+      headers: this.getAuthHeaders(),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({
@@ -146,13 +171,14 @@ class ApiClient {
   }
 
   async importProfile(file: File): Promise<VoiceProfileResponse> {
-    const url = `${this.getBaseUrl()}/profiles/import`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/profiles/import`);
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -166,13 +192,14 @@ class ApiClient {
   }
 
   async uploadAvatar(profileId: string, file: File): Promise<VoiceProfileResponse> {
-    const url = `${this.getBaseUrl()}/profiles/${profileId}/avatar`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/profiles/${profileId}/avatar`);
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -224,8 +251,10 @@ class ApiClient {
   }
 
   async exportGeneration(generationId: string): Promise<Blob> {
-    const url = `${this.getBaseUrl()}/history/${generationId}/export`;
-    const response = await fetch(url);
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/history/${generationId}/export`);
+    const response = await fetch(url, {
+      headers: this.getAuthHeaders(),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({
@@ -238,8 +267,10 @@ class ApiClient {
   }
 
   async exportGenerationAudio(generationId: string): Promise<Blob> {
-    const url = `${this.getBaseUrl()}/history/${generationId}/export-audio`;
-    const response = await fetch(url);
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/history/${generationId}/export-audio`);
+    const response = await fetch(url, {
+      headers: this.getAuthHeaders(),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({
@@ -252,13 +283,14 @@ class ApiClient {
   }
 
   async importGeneration(file: File): Promise<{ id: string; profile_id: string; profile_name: string; text: string; message: string }> {
-    const url = `${this.getBaseUrl()}/history/import`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/history/import`);
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -273,11 +305,11 @@ class ApiClient {
 
   // Audio
   getAudioUrl(audioId: string): string {
-    return `${this.getBaseUrl()}/audio/${audioId}`;
+    return this.withAuthQuery(`${this.getBaseUrl()}/audio/${audioId}`);
   }
 
   getSampleUrl(sampleId: string): string {
-    return `${this.getBaseUrl()}/samples/${sampleId}`;
+    return this.withAuthQuery(`${this.getBaseUrl()}/samples/${sampleId}`);
   }
 
   // Transcription
@@ -288,10 +320,11 @@ class ApiClient {
       formData.append('language', language);
     }
 
-    const url = `${this.getBaseUrl()}/transcribe`;
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/transcribe`);
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -496,8 +529,10 @@ class ApiClient {
   }
 
   async exportStoryAudio(storyId: string): Promise<Blob> {
-    const url = `${this.getBaseUrl()}/stories/${storyId}/export-audio`;
-    const response = await fetch(url);
+    const url = this.withAuthQuery(`${this.getBaseUrl()}/stories/${storyId}/export-audio`);
+    const response = await fetch(url, {
+      headers: this.getAuthHeaders(),
+    });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({

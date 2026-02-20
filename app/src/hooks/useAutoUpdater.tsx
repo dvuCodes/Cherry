@@ -71,9 +71,9 @@ export function useAutoUpdater(options: boolean | UseAutoUpdaterOptions = false)
         console.error('Auto update check failed:', error);
       });
     }
-    // Empty dependency array - only run once on mount
+    // Guard ref ensures we only auto-check once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform.metadata.isTauricheckOnMountcheckForUpdates]);
+  }, [checkOnMount, platform.metadata.isTauri, checkForUpdates]);
 
   // Show toast when update is available
   useEffect(() => {

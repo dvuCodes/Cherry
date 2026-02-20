@@ -35,7 +35,7 @@
   },
   "app": {
     "security": {
-      "csp": null,
+      "csp": "default-src 'self' tauri: asset: blob: data: http://127.0.0.1:* http://localhost:*; connect-src 'self' tauri: http://127.0.0.1:* http://localhost:* https://github.com https://api.github.com; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:*; media-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; script-src 'self';",
       "capabilities": ["default"]
     },
     "windows": [
@@ -47,7 +47,7 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "devtools": true,
+        "devtools": false,
         "userAgent": null,
         "titleBarStyle": "Overlay"
       }
