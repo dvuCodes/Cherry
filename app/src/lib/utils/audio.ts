@@ -1,5 +1,6 @@
-export function createAudioUrl(audioId: string, serverUrl: string): string {
-  return `${serverUrl}/audio/${audioId}`;
+export function createAudioUrl(audioId: string, serverUrl: string, apiToken?: string): string {
+  const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+  return `${serverUrl}/audio/${audioId}${tokenQuery}`;
 }
 
 export function downloadAudio(url: string, filename: string): void {

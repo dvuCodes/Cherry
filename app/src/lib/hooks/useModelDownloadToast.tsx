@@ -26,6 +26,7 @@ export function useModelDownloadToast({
 }: UseModelDownloadToastOptions) {
   const { toast } = useToast();
   const serverUrl = useServerStore((state) => state.serverUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
   const toastIdRef = useRef<string | null>(null);
   // biome-ignore lint: Using any for toast update ref to handle complex toast types
   const toastUpdateRef = useRef<any>(null);
@@ -69,7 +70,8 @@ export function useModelDownloadToast({
     toastUpdateRef.current = toastResult.update;
 
     // Subscribe to progress updates via Server-Sent Events
-    const eventSourceUrl = `${serverUrl}/models/progress/${modelName}`;
+    const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+    const eventSourceUrl = `${serverUrl}/models/progress/${modelName}${tokenQuery}`;
     console.log('[useModelDownloadToast] Creating EventSource to:', eventSourceUrl);
     const eventSource = new EventSource(eventSourceUrl);
 
@@ -208,7 +210,7 @@ export function useModelDownloadToast({
       }
       // Note: We don't dismiss the toast here as it might still be showing completion state
     };
-  }, [enabled, serverUrl, modelName, displayName, toast, formatBytes, onComplete, onError]);
+  }, [enabled, serverUrl, modelName, displayName, toast, formatBytes, onComplete, onError, apiToken]);
 
   return {
     isTracking: enabled && eventSourceRef.current !== null,

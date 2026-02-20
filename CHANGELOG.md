@@ -53,18 +53,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Audio export failing when Tauri save dialog returns object instead of string path
+### Security
+- Require a configured API token for remote backend bindings and reject unauthenticated remote requests.
+- Tighten backend CORS defaults to explicit local origins and remove credentialed wildcard behavior.
+- Harden Tauri production security with explicit CSP, disabled webview devtools, and reduced shell/fs permissions.
 
 ### Added
-- **Makefile** - Comprehensive development workflow automation with commands for setup, development, building, testing, and code quality checks
-  - Includes Python version detection and compatibility warnings
-  - Self-documenting help system with `make help`
-  - Colored output for better readability
-  - Supports parallel development server execution
+- Add backend security configuration support for API token, allowed CORS origins, docs exposure, and upload size limits.
+- Add bounded upload helpers that enforce maximum file sizes during stream reads.
+- Add backend tests for auth token parsing/validation and upload size limit enforcement.
+- Add API token field in server connection settings for secured remote backends.
+- **Makefile** - Comprehensive development workflow automation with commands for setup, development, building, testing, and code quality checks.
+  Includes Python version detection warnings, self-documenting help output, and parallel dev server support.
 
 ### Changed
-- **README** - Added Makefile reference and updated Quick Start with Makefile-based setup instructions alongside manual setup
+- Send API tokens across REST, media, and SSE requests for remote secured mode.
+- Hide backend OpenAPI docs by default outside development unless explicitly enabled.
+- Return sanitized 500 responses while logging full server-side exceptions for diagnostics.
+- **README** - Add Makefile-based quick start guidance alongside manual setup instructions.
+
+### Removed
+- Remove duplicate legacy updater hook module in favor of a single maintained implementation.
+- Remove unnecessary Tauri shell execute/spawn and filesystem read-all capabilities.
+
+### Fixed
+- Audio export failing when Tauri save dialog returns object instead of string path
+- Preserve intended `/generate` and `/transcribe` HTTP statuses (including 202/404) instead of collapsing them to 500.
+- Fix updater auto-check dependency handling in `useAutoUpdater`.
+- Fix backend progress test imports to use package-qualified module paths.
 
 ---
 

@@ -21,6 +21,7 @@ import { usePlatform } from '@/platform/PlatformContext';
 
 const connectionSchema = z.object({
   serverUrl: z.string().url('Please enter a valid URL'),
+  apiToken: z.string().optional(),
 });
 
 type ConnectionFormValues = z.infer<typeof connectionSchema>;
@@ -29,6 +30,8 @@ export function ConnectionForm() {
   const platform = usePlatform();
   const serverUrl = useServerStore((state) => state.serverUrl);
   const setServerUrl = useServerStore((state) => state.setServerUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
+  const setApiToken = useServerStore((state) => state.setApiToken);
   const keepServerRunningOnClose = useServerStore((state) => state.keepServerRunningOnClose);
   const setKeepServerRunningOnClose = useServerStore((state) => state.setKeepServerRunningOnClose);
   const { toast } = useToast();
@@ -37,18 +40,20 @@ export function ConnectionForm() {
     resolver: zodResolver(connectionSchema),
     defaultValues: {
       serverUrl: serverUrl,
+      apiToken: apiToken,
     },
   });
 
   // Sync form with store when serverUrl changes externally
   useEffect(() => {
-    form.reset({ serverUrl });
-  }, [serverUrl, form]);
+    form.reset({ serverUrl, apiToken });
+  }, [serverUrl, apiToken, form]);
 
   const { isDirty } = form.formState;
 
   function onSubmit(data: ConnectionFormValues) {
     setServerUrl(data.serverUrl);
+    setApiToken(data.apiToken?.trim() ?? '');
     form.reset(data); // Reset form state after successful submission
     toast({
       title: 'Server URL updated',
@@ -74,6 +79,29 @@ export function ConnectionForm() {
                     <Input placeholder="http://127.0.0.1:17493" {...field} />
                   </FormControl>
                   <FormDescription>Enter the URL of your voicebox backend server</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="apiToken"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>API Token</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      placeholder="Optional for localhost, required for remote servers"
+                      {...field}
+                      value={field.value ?? ''}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Sent as Bearer token when calling secured remote endpoints.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

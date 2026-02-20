@@ -125,6 +125,7 @@ export function ProfileForm() {
   const { isPlaying, playPause, cleanup: cleanupAudio } = useAudioPlayer();
   const isCreating = !editingProfileId;
   const serverUrl = useServerStore((state) => state.serverUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -263,11 +264,12 @@ export function ProfileForm() {
       setAvatarPreview(url);
       return () => URL.revokeObjectURL(url);
     } else if (editingProfile?.avatar_path) {
-      setAvatarPreview(`${serverUrl}/profiles/${editingProfile.id}/avatar`);
+      const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+      setAvatarPreview(`${serverUrl}/profiles/${editingProfile.id}/avatar${tokenQuery}`);
     } else {
       setAvatarPreview(null);
     }
-  }, [selectedAvatarFile, editingProfile, serverUrl]);
+  }, [selectedAvatarFile, editingProfile, serverUrl, apiToken]);
 
   // Restore form state from draft or editing profile
   useEffect(() => {

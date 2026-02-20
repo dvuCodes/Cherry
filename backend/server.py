@@ -5,6 +5,7 @@ This module provides an entry point that works with PyInstaller by using
 absolute imports instead of relative imports.
 """
 
+import os
 import sys
 import logging
 
@@ -45,6 +46,9 @@ except Exception as e:
 
 if __name__ == "__main__":
     try:
+        # Packaged sidecar runs in production mode by default.
+        os.environ.setdefault("VOICEBOX_ENV", "production")
+
         parser = argparse.ArgumentParser(description="voicebox backend server")
         parser.add_argument(
             "--host",
@@ -66,6 +70,7 @@ if __name__ == "__main__":
         )
         args = parser.parse_args()
         logger.info(f"Parsed arguments: host={args.host}, port={args.port}, data_dir={args.data_dir}")
+        os.environ["VOICEBOX_BIND_HOST"] = args.host
 
         # Set data directory if provided
         if args.data_dir:

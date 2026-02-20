@@ -32,10 +32,14 @@ export function ProfileCard({ profile }: ProfileCardProps) {
   const selectedProfileId = useUIStore((state) => state.selectedProfileId);
   const setSelectedProfileId = useUIStore((state) => state.setSelectedProfileId);
   const serverUrl = useServerStore((state) => state.serverUrl);
+  const apiToken = useServerStore((state) => state.apiToken);
 
   const isSelected = selectedProfileId === profile.id;
 
-  const avatarUrl = profile.avatar_path ? `${serverUrl}/profiles/${profile.id}/avatar` : null;
+  const tokenQuery = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : '';
+  const avatarUrl = profile.avatar_path
+    ? `${serverUrl}/profiles/${profile.id}/avatar${tokenQuery}`
+    : null;
 
   const handleSelect = () => {
     setSelectedProfileId(isSelected ? null : profile.id);
